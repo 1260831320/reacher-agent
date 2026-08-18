@@ -1,0 +1,160 @@
+name: ai-research-agent
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-research-postgres
+    restart: unless-stopped
+    cpus: "0.15"
+    cpu_shares: 64
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 128
+    oom_score_adj: 700
+    command:
+      - postgres
+      - -c
+      - max_connections=20
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - research_postgres_data:/var/lib/postgresql/data
+    networks:
+      - research_internal
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  research-agent:
+    build:
+      context: ../..
+    image: ai-research-agent:${RELEASE_ID:-current}
+    container_name: ai-research-agent
+    restart: unless-stopped
+    cpus: "0.50"
+    cpu_shares: 128
+    mem_limit: 768m
+    memswap_limit: 768m
+    pids_limit: 128
+    oom_score_adj: 700
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BAILIAN_API_KEY: ${BAILIAN_API_KEY}
+      BAILIAN_API_URL: ${BAILIAN_API_URL}
+      BAILIAN_PROTOCOL: ${BAILIAN_PROTOCOL}
+      BAILIAN_MODEL: ${BAILIAN_MODEL}
+      ARXIV_MAX_RESULTS: ${ARXIV_MAX_RESULTS}
+      ARXIV_LOOKBACK_DAYS: ${ARXIV_LOOKBACK_DAYS}
+      SHORTLIST_SIZE: ${SHORTLIST_SIZE}
+      DAILY_TOP_COUNT: ${DAILY_TOP_COUNT}
+      PDF_EVIDENCE_COUNT: ${PDF_EVIDENCE_COUNT}
+      PDF_MAX_BYTES: ${PDF_MAX_BYTES}
+      PDF_MAX_CHARS: ${PDF_MAX_CHARS}
+      EXTERNAL_SOURCE_TIMEOUT_MS: ${EXTERNAL_SOURCE_TIMEOUT_MS}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HF_TOKEN: ${HF_TOKEN:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      FEISHU_RESEARCH_ENABLED: ${FEISHU_RESEARCH_ENABLED}
+      FEISHU_RESEARCH_APP_ID: ${FEISHU_RESEARCH_APP_ID}
+      FEISHU_RESEARCH_APP_SECRET: ${FEISHU_RESEARCH_APP_SECRET}
+      FEISHU_RESEARCH_CHAT_ID: ${FEISHU_RESEARCH_CHAT_ID:-}
+      FEISHU_RESEARCH_RECIPIENT_OPEN_ID: ${FEISHU_RESEARCH_RECIPIENT_OPEN_ID}
+      RESEARCH_AGENT_PORT: 8787
+      NODE_OPTIONS: --max-old-space-size=512
+      TZ: ${TZ}
+    ports:
+      - "127.0.0.1:${RESEARCH_AGENT_PORT}:8787"
+    volumes:
+      - research_data:/app/data
+      - research_reports:/app/reports
+    networks:
+      - research_internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  n8n:
+    image: n8nio/n8n:2.32.6
+    container_name: ai-research-n8n
+    restart: unless-stopped
+    cpus: "0.35"
+    cpu_shares: 64
+    mem_limit: 640m
+    memswap_limit: 640m
+    pids_limit: 192
+    oom_score_adj: 700
+    init: true
+    depends_on:
+      research-agent:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        n8n import:workflow --input=/opt/research-workflows/daily-ai-research.json
+        n8n publish:workflow --id=5f052327-5b10-4c57-bff0-a364d4b52d21 || true
+        exec n8n start
+    environment:
+      TZ: ${TZ}
+      GENERIC_TIMEZONE: ${TZ}
+      N8N_HOST: 127.0.0.1
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      NODE_OPTIONS: --max-old-space-size=384
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_SECURE_COOKIE: "false"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: 336
+    ports:
+      - "127.0.0.1:${N8N_PORT}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ../../n8n:/opt/research-workflows:ro
+    networks:
+      - research_internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  n8n_data:
+  research_postgres_data:
+  research_data:
+  research_reports:
+
+networks:
+  research_internal:
+    name: ai-research-internal
+    driver: bridge

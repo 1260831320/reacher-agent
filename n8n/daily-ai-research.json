@@ -1,0 +1,62 @@
+{
+  "id": "5f052327-5b10-4c57-bff0-a364d4b52d21",
+  "name": "Personal AI Research Agent - Daily Digest",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "5dd5b194-e453-46e6-8f49-f4d409231c89",
+      "name": "Manual Run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 220]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 30 4 * * *"
+            }
+          ]
+        }
+      },
+      "id": "0264285d-a0ed-4c5e-b2e8-4c62f48088b2",
+      "name": "Every Day 04:30 JST",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [260, 80]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://research-agent:8787/run",
+        "options": {
+          "timeout": 540000
+        }
+      },
+      "id": "17c4a3ca-f606-49f5-99f7-0f6784795212",
+      "name": "Collect Rank and Write Digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [540, 140]
+    }
+  ],
+  "connections": {
+    "Manual Run": {
+      "main": [[{"node": "Collect Rank and Write Digest", "type": "main", "index": 0}]]
+    },
+    "Every Day 04:30 JST": {
+      "main": [[{"node": "Collect Rank and Write Digest", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Tokyo"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

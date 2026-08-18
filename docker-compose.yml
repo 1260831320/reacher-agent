@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-research-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ai_research}
+      POSTGRES_USER: ${POSTGRES_USER:-research_agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-research-local-only}
+      TZ: ${TZ:-Asia/Tokyo}
+    volumes:
+      - research_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  research-agent:
+    build:
+      context: .
+    container_name: ai-research-agent
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BAILIAN_API_KEY: ${BAILIAN_API_KEY:-}
+      BAILIAN_API_URL: ${BAILIAN_API_URL:-https://dashscope-us.aliyuncs.com/apps/anthropic/v1/messages}
+      BAILIAN_PROTOCOL: ${BAILIAN_PROTOCOL:-anthropic}
+      BAILIAN_MODEL: ${BAILIAN_MODEL:-qwen3.7-max}
+      ARXIV_MAX_RESULTS: ${ARXIV_MAX_RESULTS:-100}
+      ARXIV_LOOKBACK_DAYS: ${ARXIV_LOOKBACK_DAYS:-4}
+      SHORTLIST_SIZE: ${SHORTLIST_SIZE:-12}
+      DAILY_TOP_COUNT: ${DAILY_TOP_COUNT:-5}
+      PDF_EVIDENCE_COUNT: ${PDF_EVIDENCE_COUNT:-3}
+      PDF_MAX_BYTES: ${PDF_MAX_BYTES:-25000000}
+      PDF_MAX_CHARS: ${PDF_MAX_CHARS:-55000}
+      EXTERNAL_SOURCE_TIMEOUT_MS: ${EXTERNAL_SOURCE_TIMEOUT_MS:-12000}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-research_agent}:${POSTGRES_PASSWORD:-research-local-only}@postgres:5432/${POSTGRES_DB:-ai_research}
+      HF_TOKEN: ${HF_TOKEN:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      FEISHU_RESEARCH_ENABLED: ${FEISHU_RESEARCH_ENABLED:-0}
+      FEISHU_RESEARCH_APP_ID: ${FEISHU_RESEARCH_APP_ID:-}
+      FEISHU_RESEARCH_APP_SECRET: ${FEISHU_RESEARCH_APP_SECRET:-}
+      FEISHU_RESEARCH_CHAT_ID: ${FEISHU_RESEARCH_CHAT_ID:-}
+      FEISHU_RESEARCH_RECIPIENT_OPEN_ID: ${FEISHU_RESEARCH_RECIPIENT_OPEN_ID:-}
+      RESEARCH_AGENT_PORT: 8787
+      TZ: ${TZ:-Asia/Tokyo}
+    ports:
+      - "127.0.0.1:${RESEARCH_AGENT_PORT:-8787}:8787"
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:2.32.6
+    container_name: ai-research-n8n
+    restart: unless-stopped
+    depends_on:
+      research-agent:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        n8n import:workflow --input=/opt/research-workflows/daily-ai-research.json
+        n8n publish:workflow --id=5f052327-5b10-4c57-bff0-a364d4b52d21 || true
+        exec n8n start
+    environment:
+      TZ: ${TZ:-Asia/Tokyo}
+      GENERIC_TIMEZONE: ${TZ:-Asia/Tokyo}
+      N8N_HOST: 127.0.0.1
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_SECURE_COOKIE: "false"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: 336
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n:/opt/research-workflows:ro
+
+volumes:
+  n8n_data:
+  research_postgres_data:

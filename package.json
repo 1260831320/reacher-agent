@@ -1,0 +1,19 @@
+{
+  "name": "personal-ai-research-agent",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "description": "n8n-orchestrated daily AI paper research agent using the existing Bailian API configuration.",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "run:once": "node src/cli.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^5.4.149",
+    "pg": "^8.16.3"
+  }
+}

@@ -1,0 +1,10 @@
+.env
+.env.local
+.deploy.env
+node_modules/
+.runtime/
+data/*.json
+reports/*.md
+reports/*.json
+!data/.gitkeep
+!reports/.gitkeep
