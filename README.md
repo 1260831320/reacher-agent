@@ -28,6 +28,19 @@ reports/YYYY-MM-DD.md + JSON + latest.md
 
 评分权重：方向匹配 40%、方法创新 25%、工程价值 25%、摘要证据充分度 10%。模型被明确要求不得虚构引用量、GitHub 热度、实验结果或顶会状态。
 
+## 空结果闸门（fail-closed）
+
+日报管道是静默的：一份「0 篇」的日报如果被标成 `delivered`，从外面看和正常的一天没有区别。因此产出为空时一律按失败处理：
+
+- **不投递**：`deliverReport` 与 `sendFeishuDigest` 两层都会拒绝 0 篇的日报，手动补投 `/deliver/latest` 同样拦得住。
+- **不标 delivered**：投递记录写 `blocked-empty`，运行记录写 `failed`，都不会计入「今天已推送」。
+- **不静默**：`POST /run` 返回 HTTP 500，n8n 执行转红；同时向飞书推一条带失败环节的告警（`FEISHU_ALERT_ON_EMPTY=0` 可关）。
+- **可定位**：闸门会指出第一个变空的环节（`source` / `recency` / `topic-rules` / `ranking` / `selection`），运行元数据里带完整管道计数与 arXiv 返回结果的最新/最旧时间。
+
+arXiv 会在后端降级时用 200 返回一页**丢掉了 submittedDate 排序**的结果，这正是 2026-09-09 的故障成因：采集到 100 篇，却没有一篇落在 4 天窗口内。现在 arXiv 请求带退避重试，排序异常会记入元数据并把该次运行标为降级。
+
+需要纠正一次已经推错的投递时，用 `POST /run?force=1` 或 `POST /deliver/latest?force=1`：原记录保留为 `superseded`，不会被删。`force` 不会绕开空结果闸门。
+
 ## 模型配置
 
 - `scripts/stack.sh` 从 `RAG_ENV_FILE` 指向的外部私密文件读取 `BAILIAN_API_KEY`。

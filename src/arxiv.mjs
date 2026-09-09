@@ -44,7 +44,29 @@ export const parseArxivFeed = (xml) => {
   });
 };
 
-export const fetchArxivPapers = async ({ maxResults, signal }) => {
+// arXiv answers a submittedDate-descending query with a *relevance*-ordered
+// page when its search backend is degraded. The HTTP status stays 200, so the
+// only way to notice is to check the ordering we asked for. Callers use this
+// to refuse a payload that silently lost its sort.
+export const describeFeedIntegrity = (papers) => {
+  const times = papers
+    .map((paper) => new Date(paper.published).getTime())
+    .filter((time) => Number.isFinite(time));
+  const sortedDescending = times.every((time, index) => index === 0 || times[index - 1] >= time);
+  return {
+    count: papers.length,
+    datedCount: times.length,
+    undatedCount: papers.length - times.length,
+    sortedDescending,
+    newestPublished: times.length ? new Date(Math.max(...times)).toISOString() : '',
+    oldestPublished: times.length ? new Date(Math.min(...times)).toISOString() : ''
+  };
+};
+
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+export const fetchArxivPapers = async ({ maxResults, signal, attempts = 3, retryBaseMs = 4_000 }) => {
   const params = new URLSearchParams({
     search_query: '(cat:cs.AI OR cat:cs.CL OR cat:cs.IR OR cat:cs.LG)',
     start: '0',
@@ -52,13 +74,26 @@ export const fetchArxivPapers = async ({ maxResults, signal }) => {
     sortBy: 'submittedDate',
     sortOrder: 'descending'
   });
-  const response = await fetch(`https://export.arxiv.org/api/query?${params}`, {
-    signal,
-    headers: {
-      'User-Agent': 'personal-ai-research-agent/0.1 (daily academic digest)'
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let retryable = true;
+    try {
+      const response = await fetch(`https://export.arxiv.org/api/query?${params}`, {
+        signal,
+        headers: {
+          'User-Agent': 'personal-ai-research-agent/0.1 (daily academic digest)'
+        }
+      });
+      if (response.ok) return parseArxivFeed(await response.text());
+      retryable = RETRYABLE_STATUS.has(response.status);
+      lastError = new Error(`arXiv request failed: HTTP ${response.status}`);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      lastError = error;
     }
-  });
-  if (!response.ok) throw new Error(`arXiv request failed: HTTP ${response.status}`);
-  return parseArxivFeed(await response.text());
+    if (!retryable) break;
+    if (attempt < attempts) await sleep(retryBaseMs * attempt);
+  }
+  throw lastError;
 };
 

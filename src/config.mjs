@@ -25,6 +25,8 @@ export const loadConfig = () => ({
   huggingFaceToken: process.env.HF_TOKEN || '',
   githubToken: process.env.GITHUB_TOKEN || '',
   feishuEnabled: process.env.FEISHU_RESEARCH_ENABLED === '1',
+  // A blocked digest is still an incident: alert unless explicitly muted.
+  alertOnEmpty: process.env.FEISHU_ALERT_ON_EMPTY !== '0',
   feishuAppId: process.env.FEISHU_RESEARCH_APP_ID || '',
   feishuAppSecret: process.env.FEISHU_RESEARCH_APP_SECRET || '',
   feishuRecipientChatId: (process.env.FEISHU_RESEARCH_CHAT_ID || '').trim(),

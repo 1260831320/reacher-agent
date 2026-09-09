@@ -3,7 +3,8 @@ const bulletList = (items) => (items || []).map((item) => `  - ${escapeMd(item)}
 
 export const buildMarkdownReport = ({
   date, generatedAt, papers, sourceCount, recentCount, shortlistCount, model,
-  degraded, modelDegraded, degradedReason, sourceStatus = {}, trends = []
+  degraded, modelDegraded, degradedReason, sourceStatus = {}, trends = [],
+  emptyGate = null, pipelineCounts = null
 }) => {
   const hf = sourceStatus.huggingFace || {};
   const github = sourceStatus.github || {};
@@ -37,7 +38,13 @@ export const buildMarkdownReport = ({
   }
 
   if (papers.length === 0) {
-    lines.push('今天的时间窗口内没有符合当前主题规则的论文。');
+    lines.push('> 🚨 本次运行未产出任何论文，已被空结果闸门拦截，**未推送日报**。');
+    if (emptyGate) {
+      lines.push('>', `> 失败环节：${escapeMd(emptyGate.stage)}`, `> 原因：${escapeMd(emptyGate.reason)}`);
+    }
+    if (pipelineCounts) {
+      lines.push('>', `> 管道计数：采集 ${pipelineCounts.source} → 窗口内 ${pipelineCounts.recent} → 初筛 ${pipelineCounts.shortlist} → 评分 ${pipelineCounts.ranked} → 入选 ${pipelineCounts.selected}`);
+    }
     return `${lines.join('\n')}\n`;
   }
 

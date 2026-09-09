@@ -1,9 +1,11 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fetchArxivPapers } from './arxiv.mjs';
+import { describeFeedIntegrity, fetchArxivPapers } from './arxiv.mjs';
 import { analyzePaperEvidence, rankWithBailian } from './bailian.mjs';
 import { finishRun, initializeDatabase, loadTrends, persistResults, startRun } from './database.mjs';
 import { deliverReport } from './delivery.mjs';
+import { sendFeishuAlert } from './feishu.mjs';
+import { buildEmptyAlert, describeEmptyStage, EmptyDigestError } from './gate.mjs';
 import { enrichWithGithub } from './github.mjs';
 import { enrichWithHuggingFace, fetchHuggingFaceDailyPapers } from './huggingface.mjs';
 import { extractPdfText } from './pdf.mjs';
@@ -50,7 +52,7 @@ const addEvidence = async (papers, config, signal, sourceStatus) => {
   return enriched;
 };
 
-export const runCollector = async (config) => {
+export const runCollector = async (config, { force = false } = {}) => {
   const startedAt = new Date();
   const date = zonedDate(startedAt, config.timezone);
   const controller = new AbortController();
@@ -76,7 +78,10 @@ export const runCollector = async (config) => {
     ]);
     if (arxivResult.status === 'rejected') throw arxivResult.reason;
     const allPapers = arxivResult.value;
-    sourceStatus.arxiv = { ok: true, count: allPapers.length };
+    // Keep the shape of what arXiv actually returned: when the upstream sort
+    // silently degrades, these fields are the only forensic trail afterwards.
+    const arxivIntegrity = describeFeedIntegrity(allPapers);
+    sourceStatus.arxiv = { ok: true, count: allPapers.length, ...arxivIntegrity };
     const hfPapers = hfResult.status === 'fulfilled' ? hfResult.value : [];
     sourceStatus.huggingFace = hfResult.status === 'fulfilled'
       ? { ok: true, count: hfPapers.length, error: '' }
@@ -120,8 +125,17 @@ export const runCollector = async (config) => {
       sourceStatus.database = { enabled: true, ok: false, error: error.message };
     }
     const trends = sourceStatus.database.ok ? await loadTrends(config) : [];
+    const pipelineCounts = {
+      source: allPapers.length,
+      recent: recent.length,
+      shortlist: shortlist.length,
+      ranked: ranked.length,
+      selected: selected.length
+    };
+    const emptyGate = describeEmptyStage(pipelineCounts, { lookbackDays: config.arxivLookbackDays });
     const optionalDegraded = !sourceStatus.huggingFace.ok || !sourceStatus.github.ok
-      || sourceStatus.pdf.errors.length > 0 || !sourceStatus.database.ok;
+      || sourceStatus.pdf.errors.length > 0 || !sourceStatus.database.ok
+      || !arxivIntegrity.sortedDescending;
     const generatedAt = new Date().toISOString();
     const metadata = {
       runId,
@@ -132,9 +146,11 @@ export const runCollector = async (config) => {
       recentCount: recent.length,
       shortlistCount: shortlist.length,
       selectedCount: selected.length,
+      pipelineCounts,
+      emptyGate,
       model: config.bailianModel,
       protocol: config.bailianProtocol,
-      degraded: ranking.degraded || optionalDegraded,
+      degraded: ranking.degraded || optionalDegraded || Boolean(emptyGate),
       modelDegraded: ranking.degraded,
       degradedReason: ranking.reason || '',
       sourceStatus,
@@ -152,19 +168,39 @@ export const runCollector = async (config) => {
       writeFile(path.join(config.dataDir, 'last-run.json'), `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
     ]);
 
-    metadata.delivery = await deliverReport(report, config, controller.signal);
+    // deliverReport refuses a zero-paper digest itself; this call records the
+    // block so the refusal is auditable rather than merely absent.
+    metadata.delivery = await deliverReport(report, config, controller.signal, { force });
+
+    if (emptyGate) {
+      metadata.alert = await sendFeishuAlert(
+        buildEmptyAlert({ date, gate: emptyGate, counts: pipelineCounts, model: config.bailianModel }),
+        config,
+        controller.signal
+      );
+    }
+
     await Promise.all([
       writeFile(path.join(config.reportsDir, `${date}.json`), `${JSON.stringify({ ...metadata, papers: selected }, null, 2)}\n`, 'utf8'),
       writeFile(path.join(config.dataDir, 'last-run.json'), `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
     ]);
+
+    if (emptyGate) {
+      // Fail closed: an empty day is a failed run, never a completed one.
+      await finishRun(config, runId, { status: 'failed', degraded: true, metadata });
+      throw new EmptyDigestError(emptyGate);
+    }
+
     await finishRun(config, runId, { status: 'completed', degraded: metadata.degraded, metadata });
 
     return { ok: true, ...metadata, reportPath: path.join(config.reportsDir, `${date}.md`) };
   } catch (error) {
-    try {
-      await finishRun(config, runId, { status: 'failed', degraded: true, metadata: { error: error.message } });
-    } catch {
-      // Preserve the original collection error.
+    if (!error.finalized) {
+      try {
+        await finishRun(config, runId, { status: 'failed', degraded: true, metadata: { error: error.message } });
+      } catch {
+        // Preserve the original collection error.
+      }
     }
     throw error;
   } finally {
