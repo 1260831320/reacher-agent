@@ -142,7 +142,7 @@ export const wasDelivered = async (config, date, channel) => {
 
 export const recordDelivery = async (config, runId, date, channel, delivery) => {
   if (!databaseEnabled(config)) return;
-  const allowed = new Set(['delivered', 'failed', 'skipped', 'misconfigured']);
+  const allowed = new Set(['delivered', 'failed', 'skipped', 'misconfigured', 'blocked-empty']);
   const status = allowed.has(delivery.status) ? delivery.status : 'failed';
   await getPool(config).query(
     `INSERT INTO research_deliveries
@@ -150,4 +150,17 @@ export const recordDelivery = async (config, runId, date, channel, delivery) => 
      VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $4 = 'delivered' THEN NOW() ELSE NULL END)`,
     [runId, date, channel, status, delivery.attempts || 0, delivery.messageId || '', delivery.error || '']
   );
+};
+
+// Marks an earlier successful delivery for the same date+channel as superseded
+// so a corrected digest can take the unique live-delivery slot. The original
+// row is kept (message id and timestamp intact) as an audit trail.
+export const supersedePreviousDelivery = async (config, date, channel) => {
+  if (!databaseEnabled(config)) return 0;
+  const result = await getPool(config).query(
+    `UPDATE research_deliveries SET status = 'superseded'
+     WHERE run_date = $1 AND channel = $2 AND status = 'delivered'`,
+    [date, channel]
+  );
+  return result.rowCount;
 };

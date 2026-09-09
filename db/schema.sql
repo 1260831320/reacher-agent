@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS research_deliveries (
   run_id BIGINT REFERENCES research_runs(id) ON DELETE SET NULL,
   run_date DATE NOT NULL,
   channel TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('delivered', 'failed', 'skipped', 'misconfigured')),
+  status TEXT NOT NULL CHECK (status IN ('delivered', 'failed', 'skipped', 'misconfigured', 'blocked-empty', 'superseded')),
   attempts INTEGER NOT NULL DEFAULT 0,
   message_id TEXT NOT NULL DEFAULT '',
   error TEXT NOT NULL DEFAULT '',
@@ -63,3 +63,22 @@ CREATE TABLE IF NOT EXISTS research_deliveries (
 
 CREATE UNIQUE INDEX IF NOT EXISTS research_deliveries_success_idx
   ON research_deliveries (run_date, channel) WHERE status = 'delivered';
+
+-- Widen the delivery status set on databases created before the fail-closed
+-- gate existed. CREATE TABLE IF NOT EXISTS leaves the original CHECK in place,
+-- so the constraint has to be replaced explicitly. This whole file is replayed
+-- on every run, so the swap is guarded: ADD CONSTRAINT takes an ACCESS
+-- EXCLUSIVE lock and revalidates the table, which should happen once, not daily.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'research_deliveries'::regclass
+      AND conname = 'research_deliveries_status_check'
+      AND pg_get_constraintdef(oid) LIKE '%blocked-empty%'
+  ) THEN
+    ALTER TABLE research_deliveries DROP CONSTRAINT IF EXISTS research_deliveries_status_check;
+    ALTER TABLE research_deliveries ADD CONSTRAINT research_deliveries_status_check
+      CHECK (status IN ('delivered', 'failed', 'skipped', 'misconfigured', 'blocked-empty', 'superseded'));
+  END IF;
+END $$;

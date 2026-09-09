@@ -16,8 +16,16 @@ const json = (response, status, body) => {
   response.end(`${JSON.stringify(body)}\n`);
 };
 
+// `force` replays a delivery for a date that already has one, used to correct
+// a bad push. It never bypasses the empty-result gate.
+const parseRequest = (url) => {
+  const parsed = new URL(url, 'http://localhost');
+  return { path: parsed.pathname, force: parsed.searchParams.get('force') === '1' };
+};
+
 const server = http.createServer(async (request, response) => {
-  if (request.method === 'GET' && request.url === '/health') {
+  const { path: requestPath, force } = parseRequest(request.url);
+  if (request.method === 'GET' && requestPath === '/health') {
     const database = await checkDatabase(config);
     return json(response, database.ok ? 200 : 503, {
       ok: database.ok,
@@ -26,22 +34,28 @@ const server = http.createServer(async (request, response) => {
       database
     });
   }
-  if (request.method === 'POST' && request.url === '/run') {
+  if (request.method === 'POST' && requestPath === '/run') {
     if (activeRun) return json(response, 409, { ok: false, error: 'A research run is already in progress' });
-    activeRun = runCollector(config);
+    activeRun = runCollector(config, { force });
     try {
       return json(response, 200, await activeRun);
     } catch (error) {
-      return json(response, 500, { ok: false, error: error.message });
+      // A blocked empty digest must surface as a failed HTTP call so the n8n
+      // execution turns red instead of quietly reporting success.
+      return json(response, 500, {
+        ok: false,
+        error: error.message,
+        ...(error.name === 'EmptyDigestError' ? { emptyGate: { stage: error.stage, reason: error.reason } } : {})
+      });
     } finally {
       activeRun = null;
     }
   }
-  if (request.method === 'POST' && request.url === '/deliver/latest') {
+  if (request.method === 'POST' && requestPath === '/deliver/latest') {
     try {
       const lastRun = JSON.parse(await readFile(path.join(config.dataDir, 'last-run.json'), 'utf8'));
       const report = JSON.parse(await readFile(path.join(config.reportsDir, `${lastRun.date}.json`), 'utf8'));
-      const delivery = await deliverReport(report, config, AbortSignal.timeout(30_000));
+      const delivery = await deliverReport(report, config, AbortSignal.timeout(30_000), { force });
       const ok = delivery.status === 'delivered' || delivery.status === 'skipped';
       return json(response, ok ? 200 : 502, { ok, date: report.date, delivery });
     } catch (error) {

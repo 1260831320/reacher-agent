@@ -62,6 +62,17 @@ const sendOnce = async (digest, config, target, signal) => {
 
 export const sendFeishuDigest = async (report, config, signal) => {
   if (!config.feishuEnabled) return { enabled: false, status: 'disabled', attempts: 0 };
+  // Last line of defence: no caller may push a digest with nothing in it,
+  // including the manual /deliver/latest replay path.
+  if (!report.papers || report.papers.length === 0) {
+    return {
+      enabled: true,
+      status: 'blocked-empty',
+      attempts: 0,
+      targetType: resolveFeishuTarget(config).type,
+      reason: 'Digest contains zero papers'
+    };
+  }
   const target = resolveFeishuTarget(config);
   if (!config.feishuAppId || !config.feishuAppSecret || !target.id) {
     return { enabled: true, status: 'misconfigured', attempts: 0, targetType: target.type, error: 'Feishu app credentials or recipient id is missing' };
@@ -78,4 +89,18 @@ export const sendFeishuDigest = async (report, config, signal) => {
     }
   }
   return { enabled: true, status: 'failed', attempts: 3, targetType: target.type, error: lastError?.message || 'Unknown Feishu delivery error' };
+};
+
+export const sendFeishuAlert = async (text, config, signal) => {
+  if (!config.feishuEnabled || !config.alertOnEmpty) return { status: 'disabled', attempts: 0 };
+  const target = resolveFeishuTarget(config);
+  if (!config.feishuAppId || !config.feishuAppSecret || !target.id) {
+    return { status: 'misconfigured', attempts: 0, targetType: target.type };
+  }
+  try {
+    const messageId = await sendOnce(text, config, target, signal);
+    return { status: 'sent', attempts: 1, targetType: target.type, messageId };
+  } catch (error) {
+    return { status: 'failed', attempts: 1, targetType: target.type, error: error.message };
+  }
 };
