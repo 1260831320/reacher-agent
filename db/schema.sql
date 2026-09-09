@@ -66,7 +66,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS research_deliveries_success_idx
 
 -- Widen the delivery status set on databases created before the fail-closed
 -- gate existed. CREATE TABLE IF NOT EXISTS leaves the original CHECK in place,
--- so the constraint has to be replaced explicitly. Drop-then-add is idempotent.
-ALTER TABLE research_deliveries DROP CONSTRAINT IF EXISTS research_deliveries_status_check;
-ALTER TABLE research_deliveries ADD CONSTRAINT research_deliveries_status_check
-  CHECK (status IN ('delivered', 'failed', 'skipped', 'misconfigured', 'blocked-empty', 'superseded'));
+-- so the constraint has to be replaced explicitly. This whole file is replayed
+-- on every run, so the swap is guarded: ADD CONSTRAINT takes an ACCESS
+-- EXCLUSIVE lock and revalidates the table, which should happen once, not daily.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'research_deliveries'::regclass
+      AND conname = 'research_deliveries_status_check'
+      AND pg_get_constraintdef(oid) LIKE '%blocked-empty%'
+  ) THEN
+    ALTER TABLE research_deliveries DROP CONSTRAINT IF EXISTS research_deliveries_status_check;
+    ALTER TABLE research_deliveries ADD CONSTRAINT research_deliveries_status_check
+      CHECK (status IN ('delivered', 'failed', 'skipped', 'misconfigured', 'blocked-empty', 'superseded'));
+  END IF;
+END $$;
