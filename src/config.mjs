@@ -20,7 +20,7 @@ export const loadConfig = () => ({
   bailianApiKey: process.env.BAILIAN_API_KEY || '',
   bailianApiUrl: process.env.BAILIAN_API_URL || 'https://dashscope-us.aliyuncs.com/apps/anthropic/v1/messages',
   bailianProtocol: process.env.BAILIAN_PROTOCOL || 'anthropic',
-  bailianModel: process.env.BAILIAN_MODEL || 'qwen3.7-max',
+  bailianModel: process.env.BAILIAN_MODEL || 'qwen3.8-max',
   databaseUrl: process.env.DATABASE_URL || '',
   huggingFaceToken: process.env.HF_TOKEN || '',
   githubToken: process.env.GITHUB_TOKEN || '',

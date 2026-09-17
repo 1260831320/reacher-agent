@@ -28,7 +28,7 @@ services:
       BAILIAN_API_KEY: ${BAILIAN_API_KEY:-}
       BAILIAN_API_URL: ${BAILIAN_API_URL:-https://dashscope-us.aliyuncs.com/apps/anthropic/v1/messages}
       BAILIAN_PROTOCOL: ${BAILIAN_PROTOCOL:-anthropic}
-      BAILIAN_MODEL: ${BAILIAN_MODEL:-qwen3.7-max}
+      BAILIAN_MODEL: ${BAILIAN_MODEL:-qwen3.8-max}
       ARXIV_MAX_RESULTS: ${ARXIV_MAX_RESULTS:-100}
       ARXIV_LOOKBACK_DAYS: ${ARXIV_LOOKBACK_DAYS:-4}
       SHORTLIST_SIZE: ${SHORTLIST_SIZE:-12}

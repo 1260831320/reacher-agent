@@ -57,6 +57,11 @@ export const buildMarkdownReport = ({
     lines.push(`- 对 RAG：${paper.ragImpact}`);
     lines.push(`- 对 Agent：${paper.agentImpact}`);
     lines.push(`- 复现建议：${paper.reproduce}`);
+    lines.push(`- RAG 复用 / 精读价值：${paper.ragReuseScore.toFixed(1)} / ${paper.studyValueScore.toFixed(1)}（优先分 ${paper.priorityScore.toFixed(1)}）`);
+    if (paper.isPriorityPick && paper.directReusePoints?.length) {
+      lines.push('- 可直接复用点：', ...bulletList(paper.directReusePoints));
+    }
+    if (paper.isPriorityPick) lines.push(`- 精读判断：${paper.studyRationale}`);
     if (paper.hfUrl) lines.push(`- Hugging Face：Daily Papers 第 ${paper.hfTrendingRank} 位，${paper.hfUpvotes || 0} 赞 · [页面](${paper.hfUrl})`);
     if (paper.githubUrl) lines.push(`- GitHub：${paper.githubFullName || '正文中的仓库'}，★ ${paper.githubStars || 0} / Fork ${paper.githubForks || 0} · [仓库](${paper.githubUrl})`);
     lines.push(`- 作者：${paper.authors.slice(0, 6).join(', ')}${paper.authors.length > 6 ? ' 等' : ''}`);

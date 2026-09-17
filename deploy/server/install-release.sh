@@ -42,7 +42,7 @@ if [[ ! -f "${ENV_FILE}" ]]; then
     printf 'BAILIAN_API_KEY=%s\n' "${BAILIAN_API_KEY}"
     printf 'BAILIAN_API_URL=%s\n' 'https://dashscope-us.aliyuncs.com/apps/anthropic/v1/messages'
     printf 'BAILIAN_PROTOCOL=%s\n' 'anthropic'
-    printf 'BAILIAN_MODEL=%s\n' 'qwen3.7-max'
+    printf 'BAILIAN_MODEL=%s\n' 'qwen3.8-max'
     printf 'POSTGRES_DB=%s\n' 'ai_research'
     printf 'POSTGRES_USER=%s\n' 'research_agent'
     printf 'POSTGRES_PASSWORD=%s\n' "${POSTGRES_PASSWORD}"
@@ -113,9 +113,13 @@ upsert_env() {
   chmod 600 "${temporary}"
   mv "${temporary}" "${ENV_FILE}"
 }
+PREVIOUS_BAILIAN_MODEL="$(sed -n 's/^BAILIAN_MODEL=//p' "${ENV_FILE}" | tail -1)"
 if [[ -n "${FEISHU_RESEARCH_CHAT_ID:-}" ]]; then
   upsert_env FEISHU_RESEARCH_CHAT_ID "${FEISHU_RESEARCH_CHAT_ID}"
 fi
+# Existing installations keep app.env across releases, so an explicit upsert
+# is required for the production model migration.
+upsert_env BAILIAN_MODEL qwen3.8-max
 
 if [[ "$(stat -c '%a' "${ENV_FILE}")" != '600' ]]; then
   chmod 600 "${ENV_FILE}"
@@ -130,6 +134,9 @@ COMPOSE_FILE="${CURRENT_LINK}/deploy/server/docker-compose.yml"
 
 rollback() {
   trap - ERR
+  if [[ -n "${PREVIOUS_BAILIAN_MODEL}" ]]; then
+    upsert_env BAILIAN_MODEL "${PREVIOUS_BAILIAN_MODEL}"
+  fi
   if [[ -n "${PREVIOUS_TARGET}" ]]; then
     ln -sfn "${PREVIOUS_TARGET}" "${CURRENT_LINK}"
     docker compose --project-name ai-research-agent \
@@ -162,6 +169,8 @@ curl --fail --silent --show-error --max-time 5 http://127.0.0.1:5678/healthz >/d
 if [[ "${RUN_SMOKE:-1}" == '1' ]]; then
   curl --fail --silent --show-error --max-time 540 -X POST http://127.0.0.1:8787/run > "${SHARED_DIR}/last-smoke.json"
   chmod 600 "${SHARED_DIR}/last-smoke.json"
+  grep -Eq '"model"[[:space:]]*:[[:space:]]*"qwen3\.8-max"' "${SHARED_DIR}/last-smoke.json"
+  grep -Eq '"modelDegraded"[[:space:]]*:[[:space:]]*false' "${SHARED_DIR}/last-smoke.json"
 fi
 
 docker exec ai-research-postgres psql -U research_agent -d ai_research -Atc \

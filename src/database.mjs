@@ -53,7 +53,14 @@ const summaryOf = (paper) => ({
   whyImportant: paper.whyImportant,
   ragImpact: paper.ragImpact,
   agentImpact: paper.agentImpact,
-  reproduce: paper.reproduce
+  reproduce: paper.reproduce,
+  ragReuseScore: paper.ragReuseScore,
+  studyValueScore: paper.studyValueScore,
+  priorityScore: paper.priorityScore,
+  directReusePoints: paper.directReusePoints || [],
+  studyRationale: paper.studyRationale,
+  priorityReason: paper.priorityReason,
+  isPriorityPick: Boolean(paper.isPriorityPick)
 });
 
 const signalsOf = (paper) => ({
