@@ -29,12 +29,21 @@ const clamp = (value, fallback) => {
   return Number.isFinite(number) ? Math.max(0, Math.min(10, number)) : fallback;
 };
 
+const RAG_SERVICE_PROFILE = `现有 RAG 服务是一套生产级商品知识与客户问答系统，重点链路包括：
+- 混合/向量检索、重排、知识接地与来源追溯
+- 结构化商品参数查询、MCP/工具调用和多轮澄清
+- 知识入库、去重、质量治理与增量更新
+- 离线评测、回归矩阵、可靠性门禁、降级与可观测性
+判断“直接复用”时必须指出能落到上述哪条链路，以及可验证的接入点；只有概念相似不得给高分。`;
+
 const normalizeAssessment = (paper, raw) => {
   const fallback = heuristicAssessment(paper);
   const relevance = clamp(raw?.relevance, fallback.relevance);
   const novelty = clamp(raw?.novelty, fallback.novelty);
   const engineeringValue = clamp(raw?.engineeringValue, fallback.engineeringValue);
   const evidenceQuality = clamp(raw?.evidenceQuality, fallback.evidenceQuality);
+  const ragReuseScore = clamp(raw?.ragReuseScore, fallback.ragReuseScore);
+  const studyValueScore = clamp(raw?.studyValueScore, fallback.studyValueScore);
   return {
     arxivId: paper.arxivId,
     relevance,
@@ -42,17 +51,27 @@ const normalizeAssessment = (paper, raw) => {
     engineeringValue,
     evidenceQuality,
     totalScore: Math.round((relevance * 0.4 + novelty * 0.25 + engineeringValue * 0.25 + evidenceQuality * 0.1) * 10) / 10,
+    ragReuseScore,
+    studyValueScore,
+    priorityScore: Math.round((ragReuseScore * 0.6 + studyValueScore * 0.4) * 10) / 10,
     tags: Array.isArray(raw?.tags) ? raw.tags.slice(0, 5).map(String) : fallback.tags,
     oneSentence: String(raw?.oneSentence || fallback.oneSentence),
     whyImportant: String(raw?.whyImportant || fallback.whyImportant),
     ragImpact: String(raw?.ragImpact || fallback.ragImpact),
     agentImpact: String(raw?.agentImpact || fallback.agentImpact),
-    reproduce: String(raw?.reproduce || fallback.reproduce)
+    reproduce: String(raw?.reproduce || fallback.reproduce),
+    directReusePoints: Array.isArray(raw?.directReusePoints)
+      ? raw.directReusePoints.slice(0, 3).map(String)
+      : fallback.directReusePoints,
+    studyRationale: String(raw?.studyRationale || fallback.studyRationale),
+    priorityReason: String(raw?.priorityReason || fallback.priorityReason)
   };
 };
 
 const buildPrompt = (papers) => `你是一名专注 RAG、LLM Agent 与 AI 工程落地的研究负责人。
 只能依据给出的标题和摘要判断，不得虚构引用量、GitHub、实验结果或顶会录用状态。
+
+${RAG_SERVICE_PROFILE}
 
 请逐篇评分并输出严格 JSON Object，不要输出 Markdown，顶层格式必须是 {"papers":[...]}。papers 中每项字段：
 - arxivId: 原样返回
@@ -60,12 +79,17 @@ const buildPrompt = (papers) => `你是一名专注 RAG、LLM Agent 与 AI 工�
 - novelty: 摘要所体现的方法创新度，0-10
 - engineeringValue: 可落地或可复现价值，0-10
 - evidenceQuality: 摘要中实验、数据集、基线、量化结论的充分度，0-10
+- ragReuseScore: 对现有生产 RAG 服务的直接复用/适配价值，0-10。重点判断检索、重排、知识治理、评测、Agent 编排、可靠性等功能是否能落地；仅泛泛相关不得高分
+- studyValueScore: 作为“英语精读 + 技术学习”材料的价值，0-10。兼顾结构清晰、术语可迁移、篇幅/方法可跟读、能形成工程实践闭环；不要假设读者有特定英语等级
 - tags: 最多 5 个简短中文或英文标签
 - oneSentence: 一句话中文摘要
 - whyImportant: 为什么值得关注，中文，最多 80 字
 - ragImpact: 对 RAG 的影响；无直接影响就明确写“间接相关”
 - agentImpact: 对 Agent 的影响；无直接影响就明确写“间接相关”
 - reproduce: 是否值得复现及首要验证点，中文，最多 80 字
+- directReusePoints: 最多 3 个可直接复用到 RAG 服务的具体功能点；没有就返回空数组
+- studyRationale: 为什么适合或不适合英语与技术精读，中文，最多 80 字
+- priorityReason: 综合 ragReuseScore 与 studyValueScore 的优先理由，中文，最多 80 字
 
 论文：
 ${JSON.stringify(papers.map(({ arxivId, title, abstract, categories }) => ({ arxivId, title, abstract, categories })))}`;

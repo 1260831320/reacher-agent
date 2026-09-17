@@ -9,7 +9,7 @@ import { buildEmptyAlert, describeEmptyStage, EmptyDigestError } from './gate.mj
 import { enrichWithGithub } from './github.mjs';
 import { enrichWithHuggingFace, fetchHuggingFaceDailyPapers } from './huggingface.mjs';
 import { extractPdfText } from './pdf.mjs';
-import { shortlistPapers } from './ranking.mjs';
+import { prioritizeDailyPapers, shortlistPapers } from './ranking.mjs';
 import { buildMarkdownReport } from './report.mjs';
 
 const zonedDate = (date, timezone) => new Intl.DateTimeFormat('en-CA', {
@@ -110,13 +110,12 @@ export const runCollector = async (config, { force = false } = {}) => {
       matched: github.papers.filter((paper) => paper.githubUrl).length,
       errors: github.errors
     };
-    let selected = github.papers
+    const scoredCandidates = github.papers
       .map((paper) => {
         const bonus = communityBonus(paper);
         return { ...paper, baseTotalScore: paper.totalScore, communityBonus: bonus, totalScore: Math.min(10, Math.round((paper.totalScore + bonus) * 10) / 10) };
-      })
-      .sort((a, b) => b.totalScore - a.totalScore || b.lexicalScore - a.lexicalScore)
-      .slice(0, config.dailyTopCount);
+      });
+    let selected = prioritizeDailyPapers(scoredCandidates, config.dailyTopCount);
     selected = await addEvidence(selected, config, controller.signal, sourceStatus);
 
     try {

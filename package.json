@@ -1,6 +1,6 @@
 {
   "name": "personal-ai-research-agent",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "n8n-orchestrated daily AI paper research agent using the existing Bailian API configuration.",

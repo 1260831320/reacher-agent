@@ -5,7 +5,7 @@ import { buildFeishuDigest, resolveFeishuTarget } from '../src/feishu.mjs';
 test('builds a compact private Feishu digest', () => {
   const text = buildFeishuDigest({
     date: '2026-08-17',
-    model: 'qwen3.7-max',
+    model: 'qwen3.8-max',
     trends: [{ tag: 'RAG', appearances: 2 }],
     papers: [{
       title: 'Reliable RAG', totalScore: 9.1, tags: ['RAG'], oneSentence: '摘要。',
@@ -14,7 +14,7 @@ test('builds a compact private Feishu digest', () => {
   });
   assert.match(text, /AI 论文日报/);
   assert.match(text, /Reliable RAG/);
-  assert.match(text, /qwen3\.7-max/);
+  assert.match(text, /qwen3\.8-max/);
 });
 
 test('prefers a Feishu group chat over the private recipient', () => {
