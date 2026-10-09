@@ -39,11 +39,16 @@ fi
 
 cd "${PROJECT_DIR}"
 npm test
-COPYFILE_DISABLE=1 tar --no-xattrs --exclude='./node_modules' --exclude='./.git' --exclude='./reports/*' --exclude='./data/*' \
-  -czf "${LOCAL_ARCHIVE}" .
+if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+  echo 'Commit the release changes before deployment' >&2
+  exit 1
+fi
+SOURCE_COMMIT="$(git rev-parse HEAD)"
+# Package tracked committed files only; never copy local credentials or outputs.
+git archive --format=tar.gz --output="${LOCAL_ARCHIVE}" HEAD
 
 scp -i "${DEPLOY_KEY}" -o BatchMode=yes "${LOCAL_ARCHIVE}" "${DEPLOY_HOST}:${REMOTE_ARCHIVE}"
 ssh -i "${DEPLOY_KEY}" -o BatchMode=yes "${DEPLOY_HOST}" \
-  "RUN_SMOKE=${RUN_SMOKE:-1} INSTALL_ROOT='${INSTALL_ROOT}' SOURCE_ENV='${REMOTE_SOURCE_ENV}' FEISHU_RESEARCH_CHAT_ID='${FEISHU_RESEARCH_CHAT_ID}' bash -s -- '${REMOTE_ARCHIVE}'" \
+  "RUN_SMOKE=${RUN_SMOKE:-1} ENABLE_CODEX_RESETS=${ENABLE_CODEX_RESETS:-0} SOURCE_COMMIT='${SOURCE_COMMIT}' INSTALL_ROOT='${INSTALL_ROOT}' SOURCE_ENV='${REMOTE_SOURCE_ENV}' FEISHU_RESEARCH_CHAT_ID='${FEISHU_RESEARCH_CHAT_ID}' bash -s -- '${REMOTE_ARCHIVE}'" \
   < "${PROJECT_DIR}/deploy/server/install-release.sh"
 ssh -i "${DEPLOY_KEY}" -o BatchMode=yes "${DEPLOY_HOST}" "rm -f '${REMOTE_ARCHIVE}'"

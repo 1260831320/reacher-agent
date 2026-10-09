@@ -41,23 +41,50 @@ export const resolveFeishuTarget = (config) => config.feishuRecipientChatId
   ? { id: config.feishuRecipientChatId, type: 'chat_id', channel: 'feishu-group' }
   : { id: config.feishuRecipientOpenId, type: 'open_id', channel: 'feishu-private' };
 
-const sendOnce = async (digest, config, target, signal) => {
-  const token = await requestToken(config, signal);
-  const response = await fetch(`${BASE_URL}/im/v1/messages?receive_id_type=${target.type}`, {
-    method: 'POST',
-    signal,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      receive_id: target.id,
-      msg_type: 'text',
-      content: JSON.stringify({ text: digest })
-    })
-  });
-  const body = await response.json();
+const sendOnce = async (digest, config, target, signal, uuid) => {
+  let token;
+  try {
+    token = await requestToken(config, signal);
+  } catch (error) {
+    error.deliveryUncertain = false;
+    throw error;
+  }
+  let response;
+  let body;
+  try {
+    response = await fetch(`${BASE_URL}/im/v1/messages?receive_id_type=${target.type}`, {
+      method: 'POST',
+      signal,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        receive_id: target.id,
+        msg_type: 'text',
+        content: JSON.stringify({ text: digest }),
+        ...(uuid ? { uuid } : {})
+      })
+    });
+    body = await response.json();
+  } catch (error) {
+    // The request may have reached Feishu. Retry only inside its UUID window.
+    error.deliveryUncertain = true;
+    throw error;
+  }
   if (!response.ok || body.code !== 0) {
-    throw new Error(`Feishu message failed: HTTP ${response.status}, code ${body.code ?? 'unknown'} ${String(body.msg || '').slice(0, 120)}`);
+    const error = new Error(`Feishu message failed: HTTP ${response.status}, code ${body.code ?? 'unknown'} ${String(body.msg || '').slice(0, 120)}`);
+    error.deliveryUncertain = false;
+    throw error;
   }
   return body.data?.message_id || '';
+};
+
+export const sendFeishuText = async (text, config, target, signal, uuid) => {
+  const messageId = await sendOnce(text, config, target, signal, uuid);
+  if (!messageId) {
+    const error = new Error('Feishu accepted the request without a message id');
+    error.deliveryUncertain = true;
+    throw error;
+  }
+  return messageId;
 };
 
 export const sendFeishuDigest = async (report, config, signal) => {

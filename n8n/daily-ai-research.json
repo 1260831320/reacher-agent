@@ -17,13 +17,13 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 30 4 * * *"
+              "expression": "0 30 8 * * *"
             }
           ]
         }
       },
       "id": "0264285d-a0ed-4c5e-b2e8-4c62f48088b2",
-      "name": "Every Day 04:30 JST",
+      "name": "Every Day 08:30 GMT+8",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [260, 80]
@@ -47,13 +47,13 @@
     "Manual Run": {
       "main": [[{"node": "Collect Rank and Write Digest", "type": "main", "index": 0}]]
     },
-    "Every Day 04:30 JST": {
+    "Every Day 08:30 GMT+8": {
       "main": [[{"node": "Collect Rank and Write Digest", "type": "main", "index": 0}]]
     }
   },
   "settings": {
     "executionOrder": "v1",
-    "timezone": "Asia/Tokyo"
+    "timezone": "Asia/Shanghai"
   },
   "meta": {
     "templateCredsSetupCompleted": true
