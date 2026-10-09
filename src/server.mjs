@@ -5,11 +5,13 @@ import { loadConfig } from './config.mjs';
 import { checkDatabase, initializeDatabase } from './database.mjs';
 import { deliverReport } from './delivery.mjs';
 import { runCollector } from './collector.mjs';
+import { startResetMonitor } from './codex-resets.mjs';
 
 const config = loadConfig();
 let activeRun = null;
 
 await initializeDatabase(config);
+const resetMonitor = startResetMonitor(config, { isBusy: () => Boolean(activeRun) });
 
 const json = (response, status, body) => {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -31,8 +33,16 @@ const server = http.createServer(async (request, response) => {
       ok: database.ok,
       running: Boolean(activeRun),
       model: config.bailianModel,
-      database
+      database,
+      codexResets: resetMonitor.snapshot()
     });
+  }
+  if (request.method === 'GET' && requestPath === '/codex-resets/status') {
+    try {
+      return json(response, 200, await resetMonitor.summary());
+    } catch (error) {
+      return json(response, 503, { ok: false, error: error.message });
+    }
   }
   if (request.method === 'POST' && requestPath === '/run') {
     if (activeRun) return json(response, 409, { ok: false, error: 'A research run is already in progress' });
@@ -68,3 +78,11 @@ const server = http.createServer(async (request, response) => {
 server.listen(config.port, '0.0.0.0', () => {
   console.log(`AI Research Agent listening on port ${config.port}; model=${config.bailianModel}`);
 });
+
+for (const event of ['SIGTERM', 'SIGINT']) {
+  process.once(event, async () => {
+    server.close();
+    await resetMonitor.stop();
+    process.exit(0);
+  });
+}

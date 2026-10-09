@@ -5,6 +5,10 @@ ARCHIVE_PATH="${1:?Usage: install-release.sh <release-archive>}"
 INSTALL_ROOT="${INSTALL_ROOT:?INSTALL_ROOT must be an absolute server path}"
 SOURCE_ENV="${SOURCE_ENV:?SOURCE_ENV must point to the private server environment file}"
 RELEASE_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+if [[ -n "${SOURCE_COMMIT:-}" ]]; then
+  [[ "${SOURCE_COMMIT}" =~ ^[a-f0-9]{40}$ ]] || exit 2
+  RELEASE_ID="${RELEASE_ID}-${SOURCE_COMMIT:0:8}"
+fi
 RELEASE_DIR="${INSTALL_ROOT}/releases/${RELEASE_ID}"
 CURRENT_LINK="${INSTALL_ROOT}/current"
 SHARED_DIR="${INSTALL_ROOT}/shared"
@@ -21,6 +25,7 @@ fi
 
 mkdir -p "${RELEASE_DIR}" "${SHARED_DIR}"
 tar -xzf "${ARCHIVE_PATH}" -C "${RELEASE_DIR}"
+printf '%s\n' "${SOURCE_COMMIT:-unknown}" > "${RELEASE_DIR}/source-commit"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
   if [[ ! -f "${SOURCE_ENV}" ]]; then
@@ -64,6 +69,26 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   chmod 600 "${ENV_FILE}"
 fi
 
+ENV_BACKUP="${SHARED_DIR}/app.env.before-${RELEASE_ID}"
+cp -p "${ENV_FILE}" "${ENV_BACKUP}"
+
+rollback() {
+  trap - ERR
+  cp -p "${ENV_BACKUP}" "${ENV_FILE}"
+  if [[ -n "${PREVIOUS_TARGET}" ]]; then
+    ln -sfn "${PREVIOUS_TARGET}" "${CURRENT_LINK}"
+    export RELEASE_ID="${PREVIOUS_TARGET##*/}"
+    docker compose --project-name ai-research-agent \
+      --env-file "${ENV_FILE}" \
+      -f "${CURRENT_LINK}/deploy/server/docker-compose.yml" up -d || true
+  elif [[ -L "${CURRENT_LINK}" ]]; then
+    docker compose --project-name ai-research-agent --env-file "${ENV_FILE}" \
+      -f "${CURRENT_LINK}/deploy/server/docker-compose.yml" down || true
+    rm -f "${CURRENT_LINK}"
+  fi
+}
+trap rollback ERR
+
 # Reuse only the existing Feishu bot identity. Group chat_id takes priority.
 # The research service remains otherwise independent from the customer-service stack.
 set -a
@@ -103,6 +128,10 @@ append_env_if_missing FEISHU_RESEARCH_ENABLED 1
 append_env_if_missing FEISHU_RESEARCH_APP_ID "${FEISHU_CUSTOM_APP_ID}"
 append_env_if_missing FEISHU_RESEARCH_APP_SECRET "${FEISHU_CUSTOM_APP_SECRET}"
 append_env_if_missing FEISHU_RESEARCH_RECIPIENT_OPEN_ID "${FEISHU_RESEARCH_RECIPIENT_OPEN_ID}"
+append_env_if_missing CODEX_RESETS_ENABLED 0
+append_env_if_missing CODEX_RESETS_POLL_SECONDS 300
+append_env_if_missing CODEX_RESETS_JITTER_SECONDS 60
+append_env_if_missing CODEX_RESETS_TIMEOUT_MS 12000
 upsert_env() {
   local name="$1"
   local value="$2"
@@ -113,46 +142,29 @@ upsert_env() {
   chmod 600 "${temporary}"
   mv "${temporary}" "${ENV_FILE}"
 }
-PREVIOUS_BAILIAN_MODEL="$(sed -n 's/^BAILIAN_MODEL=//p' "${ENV_FILE}" | tail -1)"
 if [[ -n "${FEISHU_RESEARCH_CHAT_ID:-}" ]]; then
   upsert_env FEISHU_RESEARCH_CHAT_ID "${FEISHU_RESEARCH_CHAT_ID}"
 fi
 # Existing installations keep app.env across releases, so an explicit upsert
 # is required for the production model migration.
 upsert_env BAILIAN_MODEL qwen3.8-max
+if [[ "${ENABLE_CODEX_RESETS:-0}" == '1' ]]; then
+  upsert_env CODEX_RESETS_ENABLED 1
+fi
 
 if [[ "$(stat -c '%a' "${ENV_FILE}")" != '600' ]]; then
   chmod 600 "${ENV_FILE}"
 fi
 if ! grep -q '^BAILIAN_API_KEY=.' "${ENV_FILE}"; then
   echo "BAILIAN_API_KEY is missing from ${ENV_FILE}" >&2
-  exit 1
+  false
 fi
 
 ln -sfn "releases/${RELEASE_ID}" "${CURRENT_LINK}"
 COMPOSE_FILE="${CURRENT_LINK}/deploy/server/docker-compose.yml"
 
-rollback() {
-  trap - ERR
-  if [[ -n "${PREVIOUS_BAILIAN_MODEL}" ]]; then
-    upsert_env BAILIAN_MODEL "${PREVIOUS_BAILIAN_MODEL}"
-  fi
-  if [[ -n "${PREVIOUS_TARGET}" ]]; then
-    ln -sfn "${PREVIOUS_TARGET}" "${CURRENT_LINK}"
-    docker compose --project-name ai-research-agent \
-      --env-file "${ENV_FILE}" \
-      -f "${CURRENT_LINK}/deploy/server/docker-compose.yml" up -d || true
-  else
-    docker compose --project-name ai-research-agent \
-      --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" down || true
-    rm -f "${CURRENT_LINK}"
-  fi
-}
-trap rollback ERR
-
 export RELEASE_ID
 docker compose --project-name ai-research-agent --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --quiet
-docker compose --project-name ai-research-agent --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" pull postgres n8n
 docker compose --project-name ai-research-agent --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build research-agent
 docker compose --project-name ai-research-agent --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --remove-orphans
 
@@ -166,6 +178,21 @@ done
 curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8787/health >/dev/null
 curl --fail --silent --show-error --max-time 5 http://127.0.0.1:5678/healthz >/dev/null
 
+# Validate the published version, not just the editable workflow definition.
+python3 - <<'PY'
+import json, pathlib, sqlite3, subprocess
+container = json.loads(subprocess.check_output(['docker', 'inspect', 'ai-research-n8n'], text=True))[0]
+data = next(m['Source'] for m in container['Mounts'] if m['Destination'] == '/home/node/.n8n')
+con = sqlite3.connect('file:' + str(pathlib.Path(data) / 'database.sqlite') + '?mode=ro', uri=True)
+row = con.execute('SELECT active, activeVersionId, settings FROM workflow_entity WHERE id = ?',
+                  ('5f052327-5b10-4c57-bff0-a364d4b52d21',)).fetchone()
+assert row and row[0] and row[1], 'Daily workflow is not published'
+assert json.loads(row[2])['timezone'] == 'Asia/Shanghai', 'Daily workflow timezone mismatch'
+nodes = json.loads(con.execute('SELECT nodes FROM workflow_history WHERE versionId = ?', (row[1],)).fetchone()[0])
+trigger = next(n for n in nodes if n['type'] == 'n8n-nodes-base.scheduleTrigger')
+assert trigger['parameters']['rule']['interval'][0]['expression'] == '0 30 8 * * *', 'Active daily schedule mismatch'
+PY
+
 if [[ "${RUN_SMOKE:-1}" == '1' ]]; then
   curl --fail --silent --show-error --max-time 540 -X POST http://127.0.0.1:8787/run > "${SHARED_DIR}/last-smoke.json"
   chmod 600 "${SHARED_DIR}/last-smoke.json"
@@ -175,6 +202,20 @@ fi
 
 docker exec ai-research-postgres psql -U research_agent -d ai_research -Atc \
   "SELECT 'runs=' || count(*) FROM research_runs" >/dev/null
+
+if [[ "${ENABLE_CODEX_RESETS:-0}" == '1' ]]; then
+  # First startup records the API history without sending historical alerts.
+  # Wait for that initialization independently of the expensive paper pipeline.
+  for _ in $(seq 1 30); do
+    if curl --fail --silent --max-time 5 http://127.0.0.1:8787/codex-resets/status \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("enabled") and (d.get("monitor") or {}).get("initialized_at") else 1)'; then
+      break
+    fi
+    sleep 5
+  done
+  curl --fail --silent --max-time 5 http://127.0.0.1:8787/codex-resets/status \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["enabled"] and d["monitor"]["initialized_at"]'
+fi
 
 trap - ERR
 printf '%s\n' "releases/${RELEASE_ID}" > "${LAST_GOOD_FILE}"

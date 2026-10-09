@@ -82,3 +82,42 @@ BEGIN
       CHECK (status IN ('delivered', 'failed', 'skipped', 'misconfigured', 'blocked-empty', 'superseded'));
   END IF;
 END $$;
+
+CREATE TABLE IF NOT EXISTS research_codex_monitor (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  initialized_at TIMESTAMPTZ,
+  etag TEXT NOT NULL DEFAULT '',
+  next_poll_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_success_at TIMESTAMPTZ,
+  failures INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS research_codex_events (
+  event_id TEXT NOT NULL,
+  reset_type TEXT NOT NULL CHECK (reset_type IN ('regular', 'banked')),
+  payload JSONB NOT NULL,
+  baseline BOOLEAN NOT NULL,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (event_id, reset_type)
+);
+
+CREATE TABLE IF NOT EXISTS research_codex_deliveries (
+  event_id TEXT NOT NULL,
+  reset_type TEXT NOT NULL,
+  target_type TEXT NOT NULL CHECK (target_type IN ('chat_id', 'open_id')),
+  target_id TEXT NOT NULL,
+  uuid TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sending', 'delivered', 'uncertain')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  first_attempt_at TIMESTAMPTZ,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  message_id TEXT NOT NULL DEFAULT '',
+  last_error TEXT NOT NULL DEFAULT '',
+  delivered_at TIMESTAMPTZ,
+  PRIMARY KEY (event_id, reset_type, target_type, target_id),
+  FOREIGN KEY (event_id, reset_type) REFERENCES research_codex_events(event_id, reset_type)
+);
+
+CREATE INDEX IF NOT EXISTS research_codex_deliveries_due_idx
+  ON research_codex_deliveries (next_attempt_at) WHERE status IN ('pending', 'sending');

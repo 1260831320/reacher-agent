@@ -31,6 +31,10 @@ export const loadConfig = () => ({
   feishuAppSecret: process.env.FEISHU_RESEARCH_APP_SECRET || '',
   feishuRecipientChatId: (process.env.FEISHU_RESEARCH_CHAT_ID || '').trim(),
   feishuRecipientOpenId: (process.env.FEISHU_RESEARCH_RECIPIENT_OPEN_ID || '').split(',')[0].trim(),
+  codexResetsEnabled: process.env.CODEX_RESETS_ENABLED === '1',
+  codexResetsPollMs: intFromEnv('CODEX_RESETS_POLL_SECONDS', 300, 60, 86400) * 1000,
+  codexResetsJitterMs: intFromEnv('CODEX_RESETS_JITTER_SECONDS', 60, 0, 600) * 1000,
+  codexResetsTimeoutMs: intFromEnv('CODEX_RESETS_TIMEOUT_MS', 12000, 1000, 30000),
   dataDir: process.env.DATA_DIR || '/app/data',
   reportsDir: process.env.REPORTS_DIR || '/app/reports',
   dryRun: process.env.DRY_RUN === '1'

@@ -5,7 +5,7 @@
 ## 第二阶段已实现
 
 ```text
-n8n 每天 04:30 JST（业务低峰）
+n8n 每天 08:30 GMT+8 开始（低优先级，允许延迟投送）
         ↓
 Research Agent HTTP 服务
         ↓
@@ -84,7 +84,7 @@ DATA_DIR="$PWD/data" REPORTS_DIR="$PWD/reports" npm run run:once
 
 服务器部署使用独立容器、Docker 网络和数据卷，不连接其他业务数据库。首次部署会从 `REMOTE_SOURCE_ENV` 指向的服务器私密环境文件读取所需凭据，并在权限为 `600` 的专属配置文件中生成 PostgreSQL 密码与 n8n 加密密钥。
 
-作为内部低优先级服务，服务器侧硬限制为：总 CPU 上限 1 核（Agent 0.50、n8n 0.35、PostgreSQL 0.15），总内存上限约 1.6 GiB，禁止使用 swap，日志自动轮转，并把 OOM 淘汰优先级设置为先终止本服务。日报安排在每日 04:30 JST 的业务低峰。
+作为内部低优先级服务，服务器侧硬限制为：总 CPU 上限 1 核（Agent 0.50、n8n 0.35、PostgreSQL 0.15），总内存上限约 1.6 GiB，禁止使用 swap，日志自动轮转，并把 OOM 淘汰优先级设置为先终止本服务。日报每天 08:30 GMT+8 开始，完成后投送；工作流明确使用 `Asia/Shanghai`，不依赖服务器时区。
 
 ```bash
 cp .deploy.env.example .deploy.env
@@ -102,6 +102,22 @@ ssh -i /absolute/path/to/ssh-key -L 5678:127.0.0.1:5678 deploy-user@example-host
 
 浏览器访问 <http://127.0.0.1:5678>。
 
+## Codex reset 独立提醒
+
+服务器可启用 `CODEX_RESETS_ENABLED=1`，使用 [Codex Resets 公共 API](https://codex-resets.com/api/docs) 的已执行事件列表。`regular` 显示为 Full reset；`banked` 表示发放储备重置额度。预测、待执行公告和用户自行使用储备额度的行为不触发提醒。
+
+- 每 300 秒检查一次，附加 0–60 秒随机错峰；使用 ETag 条件请求，尊重 `Retry-After`，失败时指数退避。
+- 论文任务运行时暂缓检查。沿用原容器 CPU、内存限制，不调用模型。
+- PostgreSQL 会话锁及共享下次检查时间防止多实例重复轮询。
+- 首次成功抓取只建立历史基线。新事件按事件 ID、类型、目标去重，分别投递到现有群聊和配置的个人 `open_id`。
+- 一路投递失败只重试该路；进程重启保留历史及待投递状态。飞书请求使用持久化 UUID。
+- 飞书 UUID 去重窗口为一小时。网络结果不确定或发送后进程崩溃时，在 50 分钟内安全重试；超过窗口标为 `uncertain` 等待核对，避免盲目重复发送。
+- `GET /codex-resets/status`（仅服务器回环地址）可查看基线、下一次检查、退避原因和投递计数，不返回凭据或目标 ID。
+
+启用部署：`ENABLE_CODEX_RESETS=1 RUN_SMOKE=0 ./scripts/deploy-server.sh`。部署包只包含已提交的 Git 文件；不会打包 `.env` 或 `.deploy.env`。发布时间、源提交和配置备份共同构成回滚锚点。`RUN_SMOKE=0` 避免重新生成和投递论文日报；部署仍核验服务健康及监控初始化。
+
+集成测试使用独立 PostgreSQL 数据库 `reset_monitor_test`，设置 `RESET_TEST_DATABASE_URL` 后运行 `npm test`。测试覆盖双渠道、双类型、并发、重启、304、429、跨页失败和延迟执行的旧公告。
+
 ## 后续阶段
 
-飞书群聊或私信推送可通过环境变量启用。第三阶段可增加 Notion、邮件等多渠道投递与阅读反馈闭环。
+第三阶段可增加 Notion、邮件等多渠道投递与阅读反馈闭环。
