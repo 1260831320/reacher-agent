@@ -81,6 +81,8 @@ rollback() {
     docker compose --project-name ai-research-agent \
       --env-file "${ENV_FILE}" \
       -f "${CURRENT_LINK}/deploy/server/docker-compose.yml" up -d || true
+    docker compose --project-name ai-research-agent --env-file "${ENV_FILE}" \
+      -f "${CURRENT_LINK}/deploy/server/docker-compose.yml" up -d --no-deps --force-recreate n8n || true
   elif [[ -L "${CURRENT_LINK}" ]]; then
     docker compose --project-name ai-research-agent --env-file "${ENV_FILE}" \
       -f "${CURRENT_LINK}/deploy/server/docker-compose.yml" down || true
@@ -167,6 +169,10 @@ export RELEASE_ID
 docker compose --project-name ai-research-agent --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --quiet
 docker compose --project-name ai-research-agent --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build research-agent
 docker compose --project-name ai-research-agent --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --remove-orphans
+# The bind mount uses the stable current/ path. Docker cannot detect that its
+# symlink now points at a different release; recreate n8n to reload and publish.
+docker compose --project-name ai-research-agent --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  up -d --no-deps --force-recreate n8n
 
 for _ in $(seq 1 48); do
   if curl --fail --silent --max-time 5 http://127.0.0.1:8787/health >/dev/null \
