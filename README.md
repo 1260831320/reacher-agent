@@ -34,7 +34,7 @@ reports/YYYY-MM-DD.md + JSON + latest.md
 
 - **不投递**：`deliverReport` 与 `sendFeishuDigest` 两层都会拒绝 0 篇的日报，手动补投 `/deliver/latest` 同样拦得住。
 - **不标 delivered**：投递记录写 `blocked-empty`，运行记录写 `failed`，都不会计入「今天已推送」。
-- **不静默**：`POST /run` 返回 HTTP 500，n8n 执行转红；同时向飞书推一条带失败环节的告警（`FEISHU_ALERT_ON_EMPTY=0` 可关）。
+- **不静默**：`POST /run` 返回 HTTP 500，n8n 执行转红；同时只向 `FEISHU_RESEARCH_RECIPIENT_OPEN_ID` 指定的个人私发一条带失败环节的告警，错误不进日报群。个人目标缺失或私发失败时不回落群聊（`FEISHU_ALERT_ON_EMPTY=0` 可关）。
 - **可定位**：闸门会指出第一个变空的环节（`source` / `recency` / `topic-rules` / `ranking` / `selection`），运行元数据里带完整管道计数与 arXiv 返回结果的最新/最旧时间。
 
 arXiv 会在后端降级时用 200 返回一页**丢掉了 submittedDate 排序**的结果，这正是 2026-09-09 的故障成因：采集到 100 篇，却没有一篇落在 4 天窗口内。现在 arXiv 请求带退避重试，排序异常会记入元数据并把该次运行标为降级。

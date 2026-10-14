@@ -120,9 +120,14 @@ export const sendFeishuDigest = async (report, config, signal) => {
 
 export const sendFeishuAlert = async (text, config, signal) => {
   if (!config.feishuEnabled || !config.alertOnEmpty) return { status: 'disabled', attempts: 0 };
-  const target = resolveFeishuTarget(config);
+  // Operational errors go only to the owner. Never fall back to the digest
+  // group, including when the private recipient is missing or delivery fails.
+  const target = { id: config.feishuRecipientOpenId, type: 'open_id' };
   if (!config.feishuAppId || !config.feishuAppSecret || !target.id) {
-    return { status: 'misconfigured', attempts: 0, targetType: target.type };
+    return {
+      status: 'misconfigured', attempts: 0, targetType: target.type,
+      error: 'Feishu app credentials or private alert recipient is missing'
+    };
   }
   try {
     const messageId = await sendOnce(text, config, target, signal);
